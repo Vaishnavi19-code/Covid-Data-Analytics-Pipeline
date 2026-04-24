@@ -1,0 +1,255 @@
+{
+  "name": "covid alert/warning system",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -592,
+        -16
+      ],
+      "id": "080616aa-d366-45cf-bbfe-ef7ca81aea4e",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:\\Users\\Vaishnavi\\.n8n-files\\covid19_data.xlsx",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        -400,
+        -16
+      ],
+      "id": "eec28bd3-6ff8-44f1-9673-d879df6d9f55",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        -192,
+        -16
+      ],
+      "id": "29092f50-8bc1-4307-b19b-d62503d0eaa0",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst check_date = new Date().toLocaleDateString('en-IN', {\n  day: '2-digit',\n  month: 'long',\n  year: 'numeric'\n});\n\n// Convert to clean JSON\nconst data = items.map(i => i.json);\n\n// Group by state\nconst stateMap = {};\n\n// Step 1: group rows by state\nfor (const row of data) {\n  const state = row.state;\n  \n  if (!stateMap[state]) {\n    stateMap[state] = [];\n  }\n  \n  stateMap[state].push(row);\n}\n\n// Step 2: sort each state by date\nfor (const state in stateMap) {\n  stateMap[state].sort((a, b) => new Date(a.date) - new Date(b.date));\n}\n\nconst stateData = [];\n\nfor (const state in stateMap) {\n  const records = stateMap[state];\n  \n  if (records.length < 3) continue;\n\n  const last3 = records.slice(-3);\n\n  const day1 = Number(last3[0].daily_new_cases || 0);\n  const day2 = Number(last3[1].daily_new_cases || 0);\n  const day3 = Number(last3[2].daily_new_cases || 0);\n\n  const latest = last3[2];\n\n  stateData.push({\n    state: state,\n    cases_day1: day1,\n    cases_day2: day2,\n    cases_day3: day3,\n    positivity_rate: Number(latest.positive_rate || 0),\n    vax_growth_rate: Number(latest.vaccination_growth || 0),\n    total_confirmed: Number(latest.confirmed || 0),\n    total_deaths: Number(latest.deaths || 0)\n  });\n}\n\nconst POSITIVITY_THRESHOLD = 5.0;\nconst VAX_GROWTH_THRESHOLD = 2.0;\nconst thresholds = {\n  positivity: POSITIVITY_THRESHOLD,\n  vax_growth: VAX_GROWTH_THRESHOLD,\n  rising_days: 3\n};\nconst alerts = [];\n\nfor (const s of stateData) {\n  const risingCases = (\n    s.cases_day3 > s.cases_day2 &&\n    s.cases_day2 > s.cases_day1\n  );\n\n  const highPositivity = s.positivity_rate > POSITIVITY_THRESHOLD;\n  const lowVaxGrowth = s.vax_growth_rate < VAX_GROWTH_THRESHOLD;\n\n  const conditionsMet = [risingCases, highPositivity, lowVaxGrowth]\n    .filter(Boolean).length;\n\n  if (conditionsMet >= 2) {\n\n    let riskLevel = 'LOW';\n    if (conditionsMet === 3) riskLevel = 'HIGH';\n    else if (conditionsMet === 2) riskLevel = 'MEDIUM';\n\n    const caseGrowth = (\n      ((s.cases_day3 - s.cases_day1) / s.cases_day1) * 100\n    ).toFixed(1);\n\n    alerts.push({\n      state: s.state,\n      risk_level: riskLevel,\n      case_growth_pct: parseFloat(caseGrowth),\n      positivity_rate: s.positivity_rate,\n      vax_growth_rate: s.vax_growth_rate\n    });\n  }\n}\n\nreturn [{\n  json: {\n    check_date,\n    total_alerts: alerts.length,\n    high_risk_states: alerts.filter(a => a.risk_level === 'HIGH').map(a => a.state),\n    medium_risk_states: alerts.filter(a => a.risk_level === 'MEDIUM').map(a => a.state),\n    all_alert_states: alerts,\n    thresholds\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        -16
+      ],
+      "id": "49dd864d-0f41-42b2-b65a-c9a2812dfdfa",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7a5006ac-f619-4b43-a530-af7482e84403",
+              "leftValue": "={{ $json.total_alerts }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        208,
+        -16
+      ],
+      "id": "fb4c718e-7cab-45b9-9a94-64188b2077c2",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "groqApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"max_tokens\": 600,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an epidemiologist advising the Indian government. Analyze COVID risk signals and provide clear warnings for government officials. Use simple non-technical language.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Analyze these COVID-19 risk signals detected today:\\n\\nDate: {{ $json.check_date }}\\nTotal States Flagged: {{ $json.total_alerts }}\\nHigh Risk States: {{ $json.high_risk_states }}\\nMedium Risk States: {{ $json.medium_risk_states }}\\n\\nDetailed Alert Data:\\n{{ $json.all_alert_states }}\\n\\nThresholds Used:\\n- Positivity Rate Threshold: {{ $json.thresholds.positivity }}%\\n- Vaccination Growth Threshold: {{ $json.thresholds.vax_growth }}%\\n- Consecutive Rising Days: {{ $json.thresholds.rising_days }}\\n\\nProvide your analysis in this exact format:\\n\\n⚠️ EARLY WARNING ALERT\\n\\n📍 AFFECTED STATES: [list states]\\n\\n📊 WHAT IS HAPPENING:\\n[2-3 sentences explaining the situation]\\n\\n❗ WHY IT IS CONCERNING:\\n[2-3 sentences on risks]\\n\\n✅ RECOMMENDED ACTIONS:\\n1. [action]\\n2. [action]\\n3. [action]\\n\\n🔴 URGENCY LEVEL: [HIGH / MEDIUM / LOW]\\n\\nKeep total response under 250 words.\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        464,
+        -128
+      ],
+      "id": "f64cabfb-6ecc-47e3-9aa4-ee88a3fc9f7a",
+      "name": "HTTP Request",
+      "credentials": {
+        "groqApi": {
+          "id": "hGxaLTk0iwiTvfKs",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        464,
+        80
+      ],
+      "id": "1c21fdee-601d-44a9-bb0b-0af70ff5b8af",
+      "name": "No Operation, do nothing"
+    },
+    {
+      "parameters": {
+        "sendTo": "vaishnavishakki19@gmail.com",
+        "subject": "=COVID Early Warning — {{ $('Code in JavaScript').item.json.total_alerts }} States Flagged — {{ $now.format('dd-MM-yyyy') }}",
+        "message": "=<div style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto;\">    <div style=\"background:#cc0000;padding:20px;border-radius:8px 8px 0 0;\">     <h2 style=\"color:white;margin:0;\">       <br>⚠️ COVID-19 Early Warning Alert     </h2>     <p style=\"color:#ffcccc;margin:5px 0 0;\">       Auto-generated Risk Detection System     </p>   </div>    <div style=\"background:#fff3f3;padding:16px;border:1px solid #ffcccc;\">     <table style=\"width:100%;border-collapse:collapse;\">       <tr>         <td style=\"padding:8px;color:#666;\">Check Date</td>         <td style=\"padding:8px;font-weight:bold;\">           {{ $now.format('dd-MM-yyyy') }}         </td>       </tr>       <tr style=\"background:#ffe6e6;\">         <td style=\"padding:8px;color:#666;\">Total States Flagged</td>         <td style=\"padding:8px;font-weight:bold;color:#cc0000;\">           {{ $('Code in JavaScript').item.json.total_alerts }}         </td>       </tr>       <tr>         <td style=\"padding:8px;color:#666;\">High Risk States</td>         <td style=\"padding:8px;font-weight:bold;\">           {{ $('Code in JavaScript').item.json.high_risk_states }}         </td>       </tr>       <tr style=\"background:#ffe6e6;\">         <td style=\"padding:8px;color:#666;\">Medium Risk States</td>         <td style=\"padding:8px;\">           {{ $('Code in JavaScript').item.json.medium_risk_states }}         </td>       </tr>     </table>   </div>    <div style=\"background:white;padding:20px;               border:1px solid #ddd;border-top:none;\">     <h3 style=\"color:#cc0000;margin-top:0;\">       🤖 AI Risk Analysis     </h3>     <p style=\"line-height:1.6;color:#333;\"> {{ $json.choices[0].message.content    .replace(/\\n\\n/g, '<br><br>')    .replace(/\\n/g, '<br>') }}     </p>   </div>    <div style=\"background:#f5f5f5;padding:12px;               border-radius:0 0 8px 8px;text-align:center;\">     <p style=\"color:#999;font-size:11px;margin:0;\">       Auto-generated by COVID Early Warning System       powered by Groq AI + n8n     </p>   </div>  </div>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        -128
+      ],
+      "id": "cb662986-f3b7-41fe-b0e1-71dd639bc5f3",
+      "name": "Send a message",
+      "webhookId": "d513c34f-8f7a-4609-8b17-5b28b6adb415",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "uinocqEci7xCIs1f",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Operation, do nothing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "ff84e608-9dc5-425c-9bdb-70853ab66749",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3c177f67a598600685317f4fa77788ac7619ef69d5b3203e5efb51d970457e7f"
+  },
+  "id": "H9RRdeKz1upWVQXQ",
+  "tags": []
+}
