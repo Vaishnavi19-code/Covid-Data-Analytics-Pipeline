@@ -1,1 +1,219 @@
 # covid19_report_automation
+Problem Statement 1 — COVID Situation Report
+
+"How can we automatically generate and distribute a daily COVID-19 situation report in natural language — without any human intervention — based on the latest available data?"
+
+Pain Point: Each morning, a health administrator had to manually open the COVID XLSX file, compute national totals, write a 3–4 paragraph situation summary, and email it to the team. This took 45–60 minutes per day and introduced inconsistency across report authors.
+Solution: An n8n automation pipeline that reads the XLSX file on a fixed daily schedule, computes all statistics using JavaScript, generates a professional situation report using the Groq LLM API, and sends it via Gmail — fully automatically, every day at 8:00 AM.
+
+Problem Statement 2 — Early Warning / Alert System
+
+"How can the system proactively alert health authorities when COVID-19 case numbers are surging — based on a 3-day rolling trend — before the situation becomes critical?"
+
+Pain Point: Surge patterns in the data were only visible retrospectively. By the time a daily report was read and escalated, a 3-day-old surge had already compounded. The second wave peak of ~400,000 cases/day in May 2021 could have triggered earlier interventions with automated surveillance.
+Solution: An n8n pipeline that runs every 6 hours, evaluates the 3-day rolling average of national new cases against a configurable threshold (default: 50,000 cases/day), and only sends an alert email when the threshold is breached. The Groq API enriches the alert with AI-generated recommended actions tailored to the detected surge magnitude.
+
+Workflow 1 - Covid Situation Report 
+
+┌────────────────┐     ┌──────────────────────┐       ┌───────────────────────┐
+│  Schedule      │     │  Read/Write Files    │       │  Extract from File    │
+│  Trigger       │────▶│  from Disk           │────▶ │  (XLSX)               │
+│                │     │  Read covid_summary   │      │  Parse rows → JSON    │
+│  Every 24h     │     │  .xlsx from disk      │      │  array                │
+│  @ 08:00 AM    │     │                       │      │                       │
+└────────────────┘     └──────────────────────┘       └───────────┬───────────┘
+                                                                 │
+                                                                 ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│  Code in JavaScript                                                        │
+│  • Sum Confirmed, Deaths, Recovered across all state rows                  │
+│  • Identify most affected state (max Confirmed)                            │
+│  • Calculate CFR = Deaths / Confirmed × 100                                │
+│  • Calculate Recovery Rate = Recovered / Confirmed × 100                   │
+│  • Build structured prompt string for Groq LLM                             │
+└──────────────────────────────────────┬─────────────────────────────────────┘
+                                       │
+                                       ▼
+┌──────────────────────────────────────────────────┐
+│  HTTP Request                                    │
+│  POST https://api.groq.com/openai/v1/chat/       │
+│  completions                                     │
+│  Model: llama-3.3-70b-versatile                           │
+│  Input: structured COVID stats prompt            │
+│  Output: AI-generated situation report text      │
+└──────────────────────────┬───────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────┐
+│  Send a Message (Gmail)                          │
+│  To: team-da04@example.com                       │
+│  Subject: COVID-19 Situation Report – {date}     │
+│  Body: AI report + key statistics footer         │
+└──────────────────────────────────────────────────┘
+
+1. Schedule Trigger : Fires the workflow every 24 hours at 08:00 AM IST. No manual execution needed.
+2. Read/Write Files from DiskFile SystemReads the covid_summary.xlsx file from the configured disk path as a binary buffer.
+3. Extract from File (XLSX)TransformParses the binary XLSX buffer into an array of JSON objects. Each object = one state-date row with fields: State, Date, Confirmed, Deaths, Cured, etc.
+4. Code in JavaScriptCodeIterates all rows to compute: national totals (confirmed, deaths, recovered), identifies the most affected state, calculates CFR and Recovery Rate, and builds the LLM prompt.
+5. HTTP Request – Groq APIHTTPPOSTs the structured prompt to api.groq.com. Model: llama-3.3-70b-versatile. Returns a 3–4 paragraph professional situation report in natural language.
+6. Send a Message – GmailGmailSends the AI-generated report + statistics footer to the configured recipient list. Subject auto-includes today's date.
+
+Workflow 2 - 
+
+┌────────────────┐     ┌──────────────────────┐     ┌───────────────────────┐
+│  Schedule      │     │  Read/Write Files     │     │  Extract from File    │
+│  Trigger       │────▶│  from Disk            │────▶│  (XLSX)               │
+│                │     │  Read covid_summary   │     │  Parse rows → JSON    │
+│  Every 6h      │     │  .xlsx from disk      │     │  array                │
+└────────────────┘     └──────────────────────┘     └───────────┬───────────┘
+                                                                 │
+                                                                 ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│  Code in JavaScript – 3-Day Alert Logic                                    │
+│  • Sort all records by date descending                                     │
+│  • Extract the 3 most recent unique dates                                  │
+│  • Aggregate national new cases per day across all states                  │
+│  • Compute 3-day moving average = (Day1 + Day2 + Day3) / 3                │
+│  • Compare against ALERT_THRESHOLD (default: 50,000 cases/day)            │
+│  • Return: { alert: true/false, movingAvg, trend, dailyTotals, prompt }   │
+└──────────────────────────────────────┬─────────────────────────────────────┘
+                                       │
+                                       ▼
+                          ┌────────────────────────┐
+                          │  IF Condition           │
+                          │  alert === true ?       │
+                          └──────────┬──────────────┘
+                                     │
+                   ┌─────────────────┴────────────────────┐
+                   │ TRUE                                  │ FALSE
+                   ▼                                       ▼
+    ┌──────────────────────────────┐       ┌──────────────────────────────┐
+    │  HTTP Request – Groq API     │       │  No Operation                │
+    │  POST api.groq.com           │       │  Workflow ends silently.     │
+    │  Input: surge prompt         │       │  No email sent.              │
+    │  Output: AI alert brief      │       │  No alert fatigue.           │
+    └──────────────┬───────────────┘       └──────────────────────────────┘
+                   │
+                   ▼
+    ┌──────────────────────────────┐
+    │  Send Alert Email – Gmail    │
+    │  Subject: COVID ALERT –   │
+    │  Surge Detected on {date}    │
+    │  Body: AI brief + stats      │
+    └──────────────────────────────┘
+
+1. Schedule Trigger : Fires every 6 hours for near-real-time monitoring. Configurable to any interval.
+2. Read/Write Files from DiskFile SystemReads the latest version of covid_summary.xlsx. Assumes the file is updated regularly with new daily records.
+3. Extract from File (XLSX)TransformConverts the XLSX binary to structured JSON rows for processing.
+4. Code in JavaScriptCodeCore alert logic: sorts by date, identifies 3 most recent days, computes national aggregates, calculates 3-day moving average, evaluates against threshold, sets alert: true/false, builds prompt if alert triggered.
+5. IF ConditionLogicRoutes workflow: alert === true → continues to HTTP + Gmail. alert === false → routes to No Operation.
+6. (TRUE)HTTP Request – Groq APIHTTPSends the surge-specific prompt to Groq. Returns an AI-written alert brief with recommended public health actions.
+7. (TRUE)Send Alert Email – GmailGmailDelivers the alert with an ALERT subject line, the AI-generated brief, and the 3-day trend statistics.6 (FALSE)No OperationTerminalSilent end node. Prevents unnecessary emails when no surge is detected.
+
+GenAI Usage — Input → Prompt → Output
+Both automations use the Groq API (model: llama-3.3-70b-versatile) to convert structured COVID data into human-readable natural language outputs. Here is the full GenAI pipeline for each:
+
+Automation 1 — Situation Report
+Input (computed by JavaScript Code node)
+totalConfirmed  = 31,026,829
+totalDeaths     = 413,609
+totalRecovered  = 30,267,311
+cfr             = 1.33%
+recoveryRate    = 97.55%
+mostAffectedState = Maharashtra (6,245,587 cases)
+reportDate      = 2021-07-15
+Prompt (sent to Groq API)
+You are a public health analyst preparing a daily COVID-19 situation report for India.
+
+Based on the following aggregated data, write a clear, concise situation report
+(3-4 paragraphs) suitable for government health administrators. Include current
+status, key concerns, and a brief outlook.
+
+Data Summary:
+- Report Date: 2021-07-15
+- Total Confirmed Cases: 31,026,829
+- Total Deaths: 413,609
+- Total Recovered: 30,267,311
+- Case Fatality Rate (CFR): 1.33%
+- National Recovery Rate: 97.55%
+- Most Affected State: Maharashtra (6,245,587 cases)
+
+Write the report in a professional tone.
+Output (generated by Groq LLM)
+Daily COVID-19 Situation Report
+Date: 22 Apr 2026 April YYYY
+
+COVID-19 Report for India - 22 April 2026 India's total COVID-19 cases have reached 43,317,226. Sadly, 621,910 people have lost their lives to the virus. Currently, 597,503 cases are active. Today, we reported 38,353 new cases, which is a rising trend. However, our recovery rate is 97.18%, which is a positive sign. The positivity rate is 0.26%, indicating that the spread is relatively slow. Some states, such as Tripura and Dadra and Nagar Haveli, are at high risk and require extra caution. We urge everyone to follow safety protocols and get vaccinated to protect themselves and their loved ones. Let's work together to fight the pandemic. Stay safe, India!
+
+Auto-generated by COVID Monitoring System powered by Groq AI
+
+Automation 2 — Early Warning Alert
+Input (computed by JavaScript Code node — surge scenario)
+3-Day Moving Average  = 382,315 cases/day
+Alert Threshold       = 50,000 cases/day
+Trend                 = RISING
+Day 1 (2021-05-06)    = 396,040 cases
+Day 2 (2021-05-05)    = 382,315 cases
+Day 3 (2021-05-04)    = 367,590 cases
+Prompt (sent to Groq API — only when alert = true)
+You are a public health emergency analyst for India.
+
+An automated COVID-19 surveillance system has detected a potential surge.
+Provide a concise alert brief (2-3 paragraphs) for health authorities including:
+1. Summary of the detected surge
+2. Recommended immediate actions
+3. States/regions that may need prioritised attention
+
+Detected Data:
+- 3-Day Rolling Average: 382,315 new cases/day
+- Alert Threshold: 50,000 cases/day
+- Case Trend (3-day): RISING by 28,450 cases
+- Day 1 (2021-05-06): 396,040 cases
+- Day 2 (2021-05-05): 382,315 cases
+- Day 3 (2021-05-04): 367,590 cases
+
+Write the alert brief in an urgent but factual tone.
+Output (generated by Groq LLM)
+COVID-19 Early Warning Alert
+Auto-generated Risk Detection System
+Check Date23-04-2026Total States Flagged8High Risk StatesMedium Risk StatesBihar,Chandigarh,Chhattisgarh,Himachal Pradesh,Nagaland,Telangana,Tripura,Uttarakhand
+ AI Risk Analysis
+ EARLY WARNING ALERT
+
+ AFFECTED STATES: Bihar, Chandigarh, Chhattisgarh, Himachal Pradesh, Nagaland, Telangana, Tripura, Uttarakhand
+
+ WHAT IS HAPPENING: Eight states have been flagged for potential COVID-19 risk, with eight states falling under the medium risk category. The positivity rate, vaccination growth, and consecutive rising days have triggered these alerts. This indicates a possible increase in COVID-19 cases in these areas.
+
+ WHY IT IS CONCERNING: The rising positivity rate and consecutive rising days suggest a potential COVID-19 outbreak, which can lead to increased hospitalizations and strain on the healthcare system. If left unaddressed, it may spread to other states and affect more people.
+
+ RECOMMENDED ACTIONS:
+1. Increase testing and contact tracing in the affected states.
+2. Enhance vaccination efforts to achieve higher coverage.
+3. Reinforce COVID-19 protocols, such as mask-wearing and social distancing, in public places.
+
+ URGENCY LEVEL: MEDIUM
+
+
+What happens when alert = false
+javascript// No prompt is generated. No API call is made.
+// The IF node routes to No Operation.
+// Zero emails sent. Zero API costs incurred.
+// The workflow runs silently and exits.
+
+
+🛠️ How to Import & Run These Workflows
+Prerequisites
+
+n8n installed (self-hosted or cloud)
+A Groq API key — get one free at console.groq.com
+A Gmail account with OAuth2 credentials configured in n8n
+The covid_summary.xlsx dataset placed at /data/covid_summary.xlsx on the n8n host
+
+Import Steps
+
+Open your n8n instance → click "New Workflow"
+Click the "..." menu → "Import from file"
+Select workflows/covid_situation_report.json or workflows/covid_early_warning_alert.json
+The full workflow will appear on the canvas with all nodes and connections
+
+dataset source - kaggle 
