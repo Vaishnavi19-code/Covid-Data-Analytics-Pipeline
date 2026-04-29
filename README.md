@@ -37,12 +37,10 @@ Project Workflow:
 - Calculated:
   - Positive Test Rate
   - Vaccination Rate
-
 - Classified Risk Levels:
   - High Risk
   - Medium Risk
   - Low Risk
-
 - Exported cleaned dataset for visualization
 
 Power BI Dashboard:
@@ -58,7 +56,7 @@ Key Insights:
 - Growth trends in vaccination over time
 
 n8n Automation:
-- Designed workflows for automated processing
+Designed workflows for automated processing:
 Workflow 1 - Covid-19 situation report
 
 1. Schedule Trigger : Fires the workflow every 24 hours at 08:00 AM IST. No manual execution needed.
@@ -68,7 +66,7 @@ Workflow 1 - Covid-19 situation report
 5. HTTP Request – Groq APIHTTPPOSTs the structured prompt to api.groq.com. Model: llama-3.3-70b-versatile. Returns a 3–4 paragraph professional situation report in natural language.
 6. Send a Message – GmailGmailSends the AI-generated report + statistics footer to the configured recipient list. Subject auto-includes today's date.
 
-workflow 2 - Covid Early warning system
+Workflow 2 - Covid Early warning system
 
 1. Schedule Trigger : Fires every 6 hours for near-real-time monitoring. Configurable to any interval.
 2. Read/Write Files from DiskFile SystemReads the latest version of covid_summary.xlsx. Assumes the file is updated regularly with new daily records.
